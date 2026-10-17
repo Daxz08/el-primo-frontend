@@ -15,6 +15,7 @@ const BASE =
 async function http<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     headers: { "Content-Type": "application/json" },
+    cache: "no-store", // Evita que el navegador (especialmente móvil) guarde datos viejos
     ...init,
   });
   if (!res.ok) {

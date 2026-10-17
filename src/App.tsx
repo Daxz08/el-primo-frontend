@@ -71,7 +71,10 @@ function initialsOf(name: string): string {
 }
 
 function timeAgo(iso: string): string {
-  const d = new Date(iso);
+  // Si la fecha no trae la zona horaria, le agregamos la 'Z' para decirle que es UTC y la convierta a local
+  const hasTimezone = iso.endsWith("Z") || iso.includes("+") || iso.match(/-[0-9]{2}:[0-9]{2}$/);
+  const d = new Date(hasTimezone ? iso : iso + "Z");
+  
   if (isNaN(d.getTime())) return iso;
   const now = new Date();
   const diffMs = now.getTime() - d.getTime();
@@ -568,7 +571,6 @@ function buildTeamDonut(ranking: Ranking[], total: number): string {
     const start = acc;
     const pct = (r.totalPoints / total) * 100;
     acc += pct;
-    // Usamos el color del primer integrante del equipo
     const color = r.members[0]?.color || "#ccc";
     return `${color} ${start}% ${acc}%`;
   });
