@@ -1,5 +1,7 @@
 {
-  "description": "Tracks and manages project context to keep teams aligned and informed, enhancing collaboration and ensuring project continuity.",
+  "title": "Producción | Dulcería El Primo",
+  "description": "Registro de preparaciones de cremoladas y helados de Dulcería El Primo.",
+  "language": "es",
   "robots": {
     "index": false
   },

@@ -1,579 +1,731 @@
-import { useState, useEffect } from "react";
-import type { ReactNode } from "react";
-import {
-  getWorkGroups,
-  getProducts,
-  getProductions,
-  createProduction,
-  getRanking,
-  getFavorites,
-  getSummary,
-} from "./services/api";
-import type {
-  WorkGroup,
-  Product,
-  Production,
-  Ranking,
-  FavoriteProduct,
-  Summary,
-  PeriodType,
-} from "./types/api";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { CSSProperties, FormEvent, ReactNode } from "react";
+import { ApiError, createProduct, createProduction, getCategories, getProductions, getProducts, getWorkGroups, updateProductAppearance } from "./services/api";
+import type { Category, Product, Production, WorkGroup } from "./types/api";
 
-type IconName = "home" | "plus" | "history" | "catalog" | "chart" | "user" | "settings" | "search" | "bell" | "arrow";
+const pages = [
+  { name: "Inicio", icon: "home" },
+  { name: "Historial", icon: "history" },
+  { name: "Estadísticas", icon: "statistics" },
+  { name: "Sabores", icon: "flavors" },
+] as const;
 
-const paths: Record<IconName, ReactNode> = {
+type Page = (typeof pages)[number]["name"];
+type IconName = (typeof pages)[number]["icon"] | "plus" | "arrow" | "close" | "refresh" | "calendar" | "search" | "switch" | "check" | "edit";
+
+const icons: Record<IconName, ReactNode> = {
   home: <><path d="m3 10 9-7 9 7"/><path d="M5 9v11h14V9M9 20v-6h6v6"/></>,
-  plus: <><path d="M12 5v14M5 12h14"/></>,
-  history: <><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 7v5l3 2"/></>,
-  catalog: <><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v15H6.5A2.5 2.5 0 0 0 4 20.5z"/><path d="M4 5.5v15A2.5 2.5 0 0 0 6.5 23H20v-5"/></>,
-  chart: <><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></>,
-  user: <><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></>,
-  settings: <><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1a1.7 1.7 0 0 0 1.9.3A1.7 1.7 0 0 0 10 3V2.8h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z"/></>,
-  search: <><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></>,
-  bell: <><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></>,
-  arrow: <><path d="m9 18 6-6-6-6"/></>,
+  history: <><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V2m6 2V2M9 9h6m-6 4h6m-6 4h4"/></>,
+  statistics: <path d="M4 4v16h16M8 16v-3m5 3V9m5 7V6"/>,
+  flavors: <><path d="M5.5 11a6.5 6.5 0 0 1 13 0H5.5ZM7 11l5 10 5-10"/><path d="M9 14h6"/></>,
+  plus: <path d="M12 5v14M5 12h14"/>,
+  arrow: <path d="m9 18 6-6-6-6"/>,
+  close: <path d="m6 6 12 12M18 6 6 18"/>,
+  refresh: <><path d="M20 8a8 8 0 0 0-14-2L3 9m0 0h5M3 9V4m1 12a8 8 0 0 0 14 2l3-3m0 0h-5m5 0v5"/></>,
+  calendar: <><rect x="3" y="5" width="18" height="16" rx="3"/><path d="M7 3v4m10-4v4M3 10h18"/></>,
+  search: <><circle cx="11" cy="11" r="7"/><path d="m16 16 4 4"/></>,
+  switch: <path d="M4 8h16m-4-4 4 4-4 4m4 4H4m4-4-4 4 4 4"/>,
+  check: <path d="m5 12 4 4L19 6"/>,
+  edit: <><path d="m14 5 5 5M4 20l4.5-1 11-11a2.1 2.1 0 0 0-3-3l-11 11L4 20Z"/></>,
 };
+
+const flavorIcons = [
+  ["🌿", "Menta"], ["🍦", "Helado"], ["🍧", "Cremolada"], ["🍓", "Fresa"],
+  ["🥭", "Mango"], ["🍍", "Piña"], ["🍋", "Limón"], ["🍇", "Uva"],
+  ["🥥", "Coco"], ["🍪", "Galleta"], ["🍫", "Chocolate"], ["🟠", "Maracuyá"], ["🟤", "Lúcuma"],
+] as const;
+const defaultFlavorColor = "#ad7055";
+const timeZone = "America/Lima";
+const monthKey = new Intl.DateTimeFormat("sv-SE", { timeZone, year: "numeric", month: "2-digit" });
+const monthLabel = new Intl.DateTimeFormat("es-PE", { timeZone, year: "numeric", month: "long" });
+const dayLabel = new Intl.DateTimeFormat("es-PE", { timeZone, weekday: "long", day: "numeric", month: "long" });
+const historyDay = new Intl.DateTimeFormat("es-PE", { timeZone, weekday: "long", day: "numeric", month: "long", year: "numeric" });
+const historyHour = new Intl.DateTimeFormat("es-PE", { timeZone, hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
+const numberLabel = new Intl.NumberFormat("es-PE", { maximumFractionDigits: 2 });
+const percentLabel = new Intl.NumberFormat("es-PE", { style: "percent", maximumFractionDigits: 1 });
+
+type DatedProduction = { record: Production; date: Date | null };
+type HistoryFlavor = { id: number; name: string };
+type OpenDialog = { kind: "register" } | { kind: "flavor"; product?: Product };
+
+function orderProductions(records: Production[]): DatedProduction[] {
+  return records.map((record) => {
+    const value = record.producedAt;
+    const date = new Date(/(?:Z|[+-]\d{2}:\d{2})$/i.test(value) ? value : value + "Z");
+    return { record, date: Number.isNaN(date.getTime()) ? null : date };
+  }).sort((first, second) => {
+    const firstTime = first.date?.getTime() ?? -Infinity;
+    const secondTime = second.date?.getTime() ?? -Infinity;
+    return firstTime === secondTime ? second.record.id - first.record.id : secondTime - firstTime;
+  });
+}
+
+function safeFlavorColor(color?: string | null) {
+  return color && /^#[0-9a-f]{6}$/i.test(color) ? color : defaultFlavorColor;
+}
+
+function flavorStyle(color?: string | null): CSSProperties {
+  return { "--flavor": safeFlavorColor(color) } as CSSProperties;
+}
+
+function groupProducts(products: Product[]) {
+  const categories = new Map<string, Product[]>();
+  for (const product of products) {
+    const category = product.categoryName || "Otros sabores";
+    const items = categories.get(category);
+    if (items) items.push(product);
+    else categories.set(category, [product]);
+  }
+  return categories;
+}
 
 function Icon({ name }: { name: IconName }) {
   return (
-    <svg className="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      {paths[name]}
+    <svg className="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      {icons[name]}
     </svg>
   );
 }
 
-const nav = [
-  ["Dashboard", "home"],
-  ["Registrar", "plus"],
-  ["Historial", "history"],
-  ["Catálogo", "catalog"],
-  ["Estadísticas", "chart"],
-  ["Mi perfil", "user"],
-] as const;
+function FlavorMark({ emoji, color }: { emoji?: string | null; color?: string | null }) {
+  return <span className="flavor-mark" style={flavorStyle(color)} aria-hidden="true">{emoji || <Icon name="flavors" />}</span>;
+}
 
-function periodToKey(label: string): PeriodType {
-  switch (label) {
-    case "Esta semana": return "WEEK";
-    case "Este mes": return "MONTH";
-    case "Últimos 3 meses": return "QUARTER";
-    case "Todo": return "ALL";
-    default: return "WEEK";
+function Brand() {
+  return <div className="brand"><span className="brand-mark"><Icon name="flavors" /></span><div><span>Dulcería</span><strong>El Primo</strong></div></div>;
+}
+
+function GroupBadge({ group }: { group: WorkGroup }) {
+  return (
+    <span className="group-badge" aria-hidden="true">
+      {group.members.slice(0, 3).map((member) => (
+        <span key={member.id} style={flavorStyle(member.color)}>{member.name.trim().slice(0, 1).toUpperCase()}</span>
+      ))}
+    </span>
+  );
+}
+
+function HistoryList({ records, empty }: { records: DatedProduction[]; empty: string }) {
+  if (records.length === 0) return <p className="empty-state">{empty}</p>;
+
+  const byDay = new Map<string, DatedProduction[]>();
+  for (const item of records) {
+    const day = item.date ? historyDay.format(item.date) : "Fecha sin confirmar";
+    const items = byDay.get(day);
+    if (items) items.push(item);
+    else byDay.set(day, [item]);
   }
+
+  return (
+    <ul className="history-days">
+      {[...byDay].map(([day, items]) => (
+        <li key={day}>
+          <h3 className="history-day-heading">{day}</h3>
+          <ul className="history-list">
+            {items.map(({ record, date }) => (
+              <li key={record.id} className="history-row">
+                <FlavorMark emoji={record.productEmoji} color={record.productColor} />
+                <div className="history-name"><strong>{record.productName}</strong><span>{record.workGroupName}</span></div>
+                {date ? <time className="record-hour" dateTime={date.toISOString()}>{historyHour.format(date)}</time> : <span className="record-hour">—</span>}
+                <span className="point-tag">+{numberLabel.format(record.points)} {record.points === 1 ? "punto" : "puntos"}</span>
+              </li>
+            ))}
+          </ul>
+        </li>
+      ))}
+    </ul>
+  );
 }
 
-function initialsOf(name: string): string {
-  if (!name) return "??";
-  const clean = name.trim();
-  const parts = clean.split(/\s+/);
-  if (parts.length >= 2 && name !== "Ghorman & Tony") return (parts[0][0] + parts[1][0]).toUpperCase();
-  if (name === "Ghorman & Tony") return "G&T";
-  return clean.slice(0, 2).toUpperCase();
+function FlavorStatistics({ records, empty, onViewHistory }: {
+  records: DatedProduction[];
+  empty: string;
+  onViewHistory: (flavor: HistoryFlavor) => void;
+}) {
+  const byFlavor = new Map<number, { record: Production; count: number }>();
+  for (const { record } of records) {
+    const flavor = byFlavor.get(record.productId);
+    if (flavor) flavor.count += 1;
+    else byFlavor.set(record.productId, { record, count: 1 });
+  }
+  const flavors = [...byFlavor.values()].sort((first, second) =>
+    second.count - first.count || first.record.productName.localeCompare(second.record.productName, "es-PE")
+  );
+  const first = flavors[0];
+  const leaders = first ? flavors.filter((flavor) => flavor.count === first.count).length : 0;
+
+  return (
+    <>
+      <dl className="stats-totals">
+        <div className="stat-total">
+          <dt>Preparaciones</dt>
+          <dd>{numberLabel.format(records.length)}</dd>
+        </div>
+        <div className="stat-total">
+          <dt>Sabores preparados</dt>
+          <dd>{numberLabel.format(flavors.length)}</dd>
+        </div>
+        {first && (
+          <div className="stat-total stat-featured">
+            <dt>{leaders > 1 ? "Empate en primer lugar" : "Sabor más preparado"}</dt>
+            <dd>
+              {leaders > 1 ? numberLabel.format(leaders) + " sabores" : first.record.productName}
+              <small>{numberLabel.format(first.count)} {first.count === 1 ? "preparación" : "preparaciones"}{leaders > 1 ? " por sabor" : ""}</small>
+            </dd>
+          </div>
+        )}
+      </dl>
+      <section className="panel">
+        <div className="panel-heading"><h2>Preparaciones por sabor</h2></div>
+        {flavors.length === 0 ? <p className="empty-state">{empty}</p> : (
+          <ol className="flavor-stats">
+            {flavors.map(({ record, count }) => {
+              const share = count / records.length;
+              return (
+                <li key={record.productId} className="flavor-stat">
+                  <FlavorMark emoji={record.productEmoji} color={record.productColor} />
+                  <div className="flavor-stat-main">
+                    <button type="button" className="text-button" aria-label={"Ver registros de " + record.productName}
+                      onClick={() => onViewHistory({ id: record.productId, name: record.productName })}>
+                      {record.productName}<Icon name="arrow" />
+                    </button>
+                    <div className="flavor-stat-track" aria-hidden="true">
+                      <span style={{ ...flavorStyle(record.productColor), width: share * 100 + "%" }} />
+                    </div>
+                  </div>
+                  <div className="flavor-stat-value">
+                    <strong>{numberLabel.format(count)} {count === 1 ? "preparación" : "preparaciones"}</strong>
+                    <small>{percentLabel.format(share)} del total</small>
+                  </div>
+                </li>
+              );
+            })}
+          </ol>
+        )}
+      </section>
+    </>
+  );
 }
 
-function timeAgo(iso: string): string {
-  // Si la fecha no trae la zona horaria, le agregamos la 'Z' para decirle que es UTC y la convierta a local
-  const hasTimezone = iso.endsWith("Z") || iso.includes("+") || iso.match(/-[0-9]{2}:[0-9]{2}$/);
-  const d = new Date(hasTimezone ? iso : iso + "Z");
-  
-  if (isNaN(d.getTime())) return iso;
-  const now = new Date();
-  const diffMs = now.getTime() - d.getTime();
-  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-  const hh = String(d.getHours()).padStart(2, "0");
-  const mm = String(d.getMinutes()).padStart(2, "0");
-  if (diffDays <= 0) return `Hoy, ${hh}:${mm}`;
-  if (diffDays === 1) return `Ayer, ${hh}:${mm}`;
-  const opts: Intl.DateTimeFormatOptions = { day: "numeric", month: "short" };
-  return `${d.toLocaleDateString("es-PE", opts)}, ${hh}:${mm}`;
-}
-
-export default function App() {
-  const [session, setSession] = useState<WorkGroup | null>(null);
-  const [workGroups, setWorkGroups] = useState<WorkGroup[]>([]);
-  const [products, setProducts] = useState<Product[]>([]);
-  const [productions, setProductions] = useState<Production[]>([]);
-  const [ranking, setRanking] = useState<Ranking[]>([]);
-  const [favorites, setFavorites] = useState<FavoriteProduct[]>([]);
-  const [summary, setSummary] = useState<Summary | null>(null);
-
-  const [period, setPeriod] = useState("Esta semana");
-  const [active, setActive] = useState("Dashboard");
-  const [showForm, setShowForm] = useState(false);
-  const [selectedProductId, setSelectedProductId] = useState<number | null>(null);
-  const [responsibleId, setResponsibleId] = useState<number | null>(null);
-
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+function FormDialog({ title, titleId, saving, onDismiss, onSubmit, children, footer, compact = false }: {
+  title: string;
+  titleId: string;
+  saving: boolean;
+  onDismiss: () => void;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  children: ReactNode;
+  footer: ReactNode;
+  compact?: boolean;
+}) {
+  const dialogRef = useRef<HTMLDialogElement>(null);
 
   useEffect(() => {
-    let mounted = true;
-    (async () => {
-      try {
-        setLoading(true);
-        const [g, p] = await Promise.all([getWorkGroups(), getProducts(true)]);
-        if (!mounted) return;
-        setWorkGroups(g);
-        setProducts(p);
-        if (g.length > 0) setResponsibleId(g[0].id);
-      } catch (e) {
-        console.error(e);
-        if (mounted) setError("No se pudo conectar con el servidor.");
-      } finally {
-        if (mounted) setLoading(false);
-      }
-    })();
-    return () => { mounted = false; };
+    const dialog = dialogRef.current;
+    dialog?.showModal();
+    return () => dialog?.close();
   }, []);
 
+  return (
+    <dialog
+      ref={dialogRef}
+      className={compact ? "register-dialog flavor-dialog" : "register-dialog"}
+      aria-labelledby={titleId}
+      onCancel={(event) => { event.preventDefault(); if (!saving) onDismiss(); }}
+      onClick={(event) => { if (event.target === event.currentTarget && !saving) onDismiss(); }}
+    >
+      <form className="register-form" onSubmit={onSubmit}>
+        <header className="dialog-header">
+          <h2 id={titleId}>{title}</h2>
+          <button type="button" className="icon-button" onClick={onDismiss} aria-label="Cerrar formulario" disabled={saving}><Icon name="close" /></button>
+        </header>
+        <div className="dialog-body">{children}</div>
+        <footer className="dialog-footer">{footer}</footer>
+      </form>
+    </dialog>
+  );
+}
+
+function FlavorDialog({ product, onDismiss, onSaved }: {
+  product?: Product;
+  onDismiss: () => void;
+  onSaved: (product: Product) => void;
+}) {
+  const [name, setName] = useState("");
+  const [categoryId, setCategoryId] = useState("");
+  const [categories, setCategories] = useState<Category[] | null>(null);
+  const [categoriesError, setCategoriesError] = useState(false);
+  const [categoryAttempt, setCategoryAttempt] = useState(0);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [emoji, setEmoji] = useState(product?.emoji || "");
+  const [color, setColor] = useState(product?.color || "");
+  const trimmedName = name.trim();
+  const selectedCategory = categories?.find((category) => String(category.id) === categoryId);
+  const canSave = Boolean(product) || (trimmedName.length > 0 && trimmedName.length <= 100 && selectedCategory !== undefined);
+  const previousIcon = product?.emoji;
+
   useEffect(() => {
-    if (!session) return;
-    let mounted = true;
-    (async () => {
-      const key = periodToKey(period);
-      try {
-        const [rank, favs, sum, prods] = await Promise.all([
-          getRanking(key), getFavorites(key, 5), getSummary(key), getProductions(),
-        ]);
-        if (!mounted) return;
-        setRanking(rank);
-        setFavorites(favs);
-        setSummary(sum);
-        setProductions(prods);
-      } catch (e) {
-        console.error(e);
-      }
-    })();
-    return () => { mounted = false; };
-  }, [session, period]);
+    if (product) return;
+    const controller = new AbortController();
+    getCategories(controller.signal)
+      .then((available) => {
+        if (!controller.signal.aborted) setCategories(available);
+      })
+      .catch(() => { if (!controller.signal.aborted) setCategoriesError(true); });
+    return () => controller.abort();
+  }, [categoryAttempt, product]);
 
-  async function handleCreateProduction() {
-    if (!selectedProductId || !responsibleId) {
-      setError("Selecciona producto y responsable.");
-      return;
-    }
+  function reloadCategories() {
+    setCategoryId("");
+    setCategories(null);
+    setCategoriesError(false);
+    setCategoryAttempt((attempt) => attempt + 1);
+  }
+
+  async function save(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!canSave || saving) return;
+
+    setSaving(true);
+    setError("");
     try {
-      setSaving(true);
-      setError(null);
-      await createProduction({ productId: selectedProductId, workGroupId: responsibleId });
-      setShowForm(false);
-      setSelectedProductId(null);
-
-      const key = periodToKey(period);
-      const [rank, favs, sum, prods] = await Promise.all([
-        getRanking(key), getFavorites(key, 5), getSummary(key), getProductions(),
-      ]);
-      setRanking(rank);
-      setFavorites(favs);
-      setSummary(sum);
-      setProductions(prods);
-    } catch (e) {
-      console.error(e);
-      setError("No se pudo registrar la producción.");
-    } finally {
+      const appearance = { emoji: emoji || null, color: color || null };
+      if (product) {
+        onSaved(await updateProductAppearance(product.id, appearance));
+      } else if (selectedCategory) {
+        onSaved(await createProduct({ name: trimmedName, categoryId: selectedCategory.id, ...appearance }));
+      }
+    } catch (failure) {
+      if (failure instanceof ApiError && failure.code === "BUSINESS_ERROR") {
+        setError("Ya existe un sabor con ese nombre.");
+      } else if (!product && failure instanceof ApiError && failure.status === 404) {
+        setError("Esa categoría ya no está disponible. Elige otra.");
+        reloadCategories();
+      } else {
+        setError("No pudimos confirmar el guardado. Recarga la página y revisa Sabores antes de volver a intentarlo.");
+      }
       setSaving(false);
     }
   }
 
-  if (loading) {
-    return (
-      <div className="login-page">
-        <div className="login-brand brand"><div className="brand-mark"><span>🍧</span><i>✦</i></div><div><strong>Dulcería</strong><span>el Primo</span></div></div>
-        <p style={{ color: "#858690" }}>Cargando…</p>
-      </div>
-    );
+  return (
+    <FormDialog title={product ? "Editar apariencia" : "Nuevo sabor"} titleId="flavor-title" saving={saving} onDismiss={onDismiss} onSubmit={save} compact
+      footer={
+        <>
+          {error && <p className="error-text" role="alert">{error}</p>}
+          <button type="submit" className="button primary" disabled={!canSave || saving}>
+            <Icon name="check" /> {saving ? "Guardando…" : product ? "Guardar cambios" : "Guardar sabor"}
+          </button>
+        </>
+      }>
+      <fieldset className="flavor-fields" disabled={saving}>
+        {!product && (
+          <>
+            <label>
+              Nombre del sabor
+              <input type="text" required maxLength={100} value={name} onChange={(event) => setName(event.target.value)} placeholder="Ej. Helado de menta" />
+            </label>
+            <label>
+              Categoría
+              <select required value={categoryId} onChange={(event) => setCategoryId(event.target.value)} disabled={!categories?.length}>
+                <option value="">Selecciona una categoría</option>
+                {categories?.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
+              </select>
+            </label>
+            {!categories && !categoriesError && <p className="muted" role="status">Cargando categorías…</p>}
+            {categoriesError && (
+              <div className="category-feedback" role="alert">
+                <p>No pudimos cargar las categorías.</p>
+                <button type="button" className="text-button" onClick={reloadCategories}>Reintentar</button>
+              </div>
+            )}
+            {categories?.length === 0 && <p className="muted">Todavía no hay categorías para asignar.</p>}
+          </>
+        )}
+        <div className="flavor-appearance-inputs">
+          <label>
+            Icono
+            <select value={emoji} onChange={(event) => setEmoji(event.target.value)}>
+              <option value="">Por categoría</option>
+              {previousIcon && !flavorIcons.some(([icon]) => icon === previousIcon) && <option value={previousIcon}>{previousIcon} Icono actual</option>}
+              {flavorIcons.map(([icon, label]) => <option key={icon} value={icon}>{icon} {label}</option>)}
+            </select>
+          </label>
+          <label>
+            Color de fondo
+            <input type="color" value={safeFlavorColor(color)} onChange={(event) => setColor(event.target.value)} />
+          </label>
+        </div>
+        {color && <button type="button" className="text-button reset-flavor-color" onClick={() => setColor("")}>Usar color por defecto</button>}
+        <div className="flavor-preview">
+          <FlavorMark emoji={emoji || product?.categoryEmoji || selectedCategory?.emoji} color={color} />
+          <strong>{product?.name || trimmedName || "Vista previa del sabor"}</strong>
+        </div>
+      </fieldset>
+    </FormDialog>
+  );
+}
+
+function RegistrationDialog({ products, groups, session, onDismiss, onSaved }: {
+  products: Product[];
+  groups: WorkGroup[];
+  session: WorkGroup;
+  onDismiss: () => void;
+  onSaved: (record: Production) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const [productId, setProductId] = useState<number | null>(null);
+  const [groupId, setGroupId] = useState(session.id);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState(false);
+  const search = query.trim().toLocaleLowerCase("es-PE");
+  const matchedProducts = products.filter((product) => product.name.toLocaleLowerCase("es-PE").includes(search));
+  const matchedCategories = groupProducts(matchedProducts);
+  const responsible = groups.find((group) => group.id === groupId);
+  const points = responsible?.members.length ? 1 / responsible.members.length : null;
+
+  async function save(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (productId === null || points === null || saving) return;
+
+    setSaving(true);
+    setError(false);
+    try {
+      const production = await createProduction({ productId, workGroupId: groupId });
+      onSaved(production);
+    } catch {
+      setError(true);
+      setSaving(false);
+    }
+  }
+
+  return (
+    <FormDialog title="Registrar preparación" titleId="register-title" saving={saving} onDismiss={onDismiss} onSubmit={save}
+      footer={
+        <>
+          {error && <p className="error-text" role="alert">No pudimos confirmar el registro. Revisa el historial antes de volver a guardarlo.</p>}
+          {points !== null && <p className="muted">{responsible?.name} suma {numberLabel.format(points)} {points === 1 ? "punto" : "puntos"}.</p>}
+          <button type="submit" className="button primary" disabled={productId === null || points === null || saving}>
+            <Icon name="check" /> {saving ? "Guardando…" : "Guardar preparación"}
+          </button>
+        </>
+      }>
+      <fieldset disabled={saving}>
+        <legend>¿Qué prepararon?</legend>
+        <label className="search-field">
+          <Icon name="search" />
+          <input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar sabor" aria-label="Buscar sabor" />
+        </label>
+        {matchedCategories.size > 0 ? (
+          <div className="registration-categories">
+            {[...matchedCategories].map(([category, options]) => (
+              <section className="registration-category" key={category}>
+                <h3>{category}</h3>
+                <div className="product-options">
+                  {options.map((product) => (
+                    <label className="choice product-choice" key={product.id}>
+                      <input type="radio" name="product" checked={productId === product.id} onChange={() => setProductId(product.id)} />
+                      <FlavorMark emoji={product.emoji || product.categoryEmoji} color={product.color} />
+                      <span>{product.name}</span>
+                    </label>
+                  ))}
+                </div>
+              </section>
+            ))}
+          </div>
+        ) : <p className="empty-state">{products.length ? "No hay sabores que coincidan." : "No hay sabores activos."}</p>}
+      </fieldset>
+      <fieldset disabled={saving}>
+        <legend>¿Quién estuvo a cargo?</legend>
+        <div className="group-options">
+          {groups.map((group) => (
+            <label className="choice group-choice" key={group.id}>
+              <input type="radio" name="group" checked={groupId === group.id} onChange={() => setGroupId(group.id)} />
+              <GroupBadge group={group} />
+              <span>{group.name}</span>
+            </label>
+          ))}
+        </div>
+      </fieldset>
+    </FormDialog>
+  );
+}
+
+export default function App() {
+  const [session, setSession] = useState<WorkGroup | null>(null);
+  const [groups, setGroups] = useState<WorkGroup[]>([]);
+  const [products, setProducts] = useState<Product[]>([]);
+  const [catalogStatus, setCatalogStatus] = useState<"loading" | "ready" | "error">("loading");
+  const [catalogAttempt, setCatalogAttempt] = useState(0);
+  const [page, setPage] = useState<Page>("Inicio");
+  const [month, setMonth] = useState("");
+  const [historyFlavor, setHistoryFlavor] = useState<HistoryFlavor | null>(null);
+  const [records, setRecords] = useState<Production[] | null>(null);
+  const [recordsStatus, setRecordsStatus] = useState<"loading" | "ready" | "error">("loading");
+  const [recordsAttempt, setRecordsAttempt] = useState(0);
+  const [dialog, setDialog] = useState<OpenDialog | null>(null);
+  const [confirmation, setConfirmation] = useState("");
+  const orderedRecords = useMemo(() => orderProductions(records ?? []), [records]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    Promise.all([getWorkGroups(controller.signal), getProducts(true, controller.signal)])
+      .then(([loadedGroups, loadedProducts]) => {
+        if (controller.signal.aborted) return;
+        setGroups(loadedGroups);
+        setProducts(loadedProducts);
+        setCatalogStatus("ready");
+      })
+      .catch(() => { if (!controller.signal.aborted) setCatalogStatus("error"); });
+    return () => controller.abort();
+  }, [catalogAttempt]);
+
+  useEffect(() => {
+    if (!session) return;
+    const controller = new AbortController();
+    getProductions(controller.signal)
+      .then((loadedRecords) => {
+        if (controller.signal.aborted) return;
+        setRecords(loadedRecords);
+        setRecordsStatus("ready");
+      })
+      .catch(() => { if (!controller.signal.aborted) setRecordsStatus("error"); });
+    return () => controller.abort();
+  }, [session, recordsAttempt]);
+
+  function refreshRecords() {
+    setRecordsStatus("loading");
+    setRecordsAttempt((attempt) => attempt + 1);
+  }
+
+  function enter(group: WorkGroup) {
+    setPage("Inicio");
+    setMonth("");
+    setHistoryFlavor(null);
+    setConfirmation("");
+    setRecords(null);
+    setRecordsStatus("loading");
+    setSession(group);
+  }
+
+  function navigate(next: Page, flavor: HistoryFlavor | null = null) {
+    setPage(next);
+    setHistoryFlavor(flavor);
+    window.scrollTo(0, 0);
+  }
+
+  function saved(record: Production) {
+    setDialog(null);
+    setConfirmation(record.productName + " · " + record.workGroupName + ". Preparación guardada.");
+    setRecords((previous) => previous && [record, ...previous.filter((item) => item.id !== record.id)]);
+    refreshRecords();
+  }
+
+  function savedFlavor(product: Product) {
+    const changedAppearance = dialog?.kind === "flavor" && Boolean(dialog.product);
+    setProducts((previous) => changedAppearance
+      ? previous.map((item) => item.id === product.id ? product : item)
+      : [...previous.filter((item) => item.id !== product.id), product]);
+    if (changedAppearance) {
+      setRecords((previous) => previous?.map((record) => record.productId === product.id
+        ? { ...record, productEmoji: product.emoji, productColor: product.color }
+        : record) ?? null);
+    }
+    setDialog(null);
+    setConfirmation(product.name + (changedAppearance ? " · Apariencia actualizada." : " ya está disponible para registrar preparaciones."));
+  }
+
+  function openDialog(next: OpenDialog) {
+    setConfirmation("");
+    setDialog(next);
   }
 
   if (!session) {
     return (
-      <div className="login-page">
-        <div className="login-brand brand"><div className="brand-mark"><span>🍧</span><i>✦</i></div><div><strong>Dulcería</strong><span>el Primo</span></div></div>
-        <div className="login-copy"><p className="eyebrow">PANEL DE PRODUCCIÓN</p><h1>¿Quién está preparando hoy?</h1><p>Elige tu equipo para entrar. Aquí todo suma, primo.</p></div>
-        <div className="login-options">
-          {workGroups.map((g) => (
-            <button key={g.id} onClick={() => setSession(g)}>
-              {g.isTeam ? (
-                <div className="double-avatar large">
-                  {g.members.map((m) => <div key={m.id} className="avatar" style={{ background: m.color }}>{initialsOf(m.name)}</div>)}
-                </div>
-              ) : (
-                <div className="avatar large-avatar" style={{ background: g.members[0]?.color ?? "#9b82ef" }}>{initialsOf(g.members[0]?.name ?? "?")}</div>
-              )}
-              <strong>{g.name}</strong>
-              <span>{g.isTeam ? "Equipo fijo · 0.5 puntos por preparación" : "Trabajo individual · 1 punto por preparación"}</span>
-              <b>Entrar como {g.isTeam ? "equipo" : g.name} <Icon name="arrow" /></b>
-            </button>
-          ))}
-        </div>
-        <p className="login-note">Sin contraseñas, porque estamos en familia.</p>
-        {error && <p style={{ color: "coral", fontSize: 12 }}>{error}</p>}
-      </div>
-    );
-  }
-
-  const leader = summary?.leader ?? ranking[0] ?? null;
-  const favorite = summary?.favoriteProduct ?? favorites[0] ?? null;
-  const totalProductions = summary?.totalProductions ?? productions.length;
-  const recentProductions = productions.slice(0, 3);
-  const historyProductions = productions;
-
-  // El ranking ahora mapea los GRUPOS
-  const rankingView: Ranking[] = workGroups.map((g) => {
-    const r = ranking.find((x) => x.id === g.id);
-    return r ?? { id: g.id, name: g.name, isTeam: g.isTeam, members: g.members, totalPoints: 0, totalProductions: 0, position: 0 };
-  });
-  rankingView.sort((a, b) => b.totalPoints - a.totalPoints);
-  rankingView.forEach((r, i) => (r.position = i + 1));
-  const maxPoints = Math.max(1, ...rankingView.map((r) => r.totalPoints));
-
-  return (
-    <div className="app-shell">
-      <aside className="sidebar">
-        <div className="brand"><div className="brand-mark"><span>🍧</span><i>✦</i></div><div><strong>Dulcería</strong><span>el Primo</span></div></div>
-        <nav className="side-nav" aria-label="Navegación principal">
-          <p>MENÚ</p>
-          {nav.map(([label, icon]) => (
-            <button key={label} className={active === label ? "active" : ""} onClick={() => setActive(label)}>
-              <Icon name={icon} /><span>{label}</span>{label === "Registrar" && <b>+</b>}
-            </button>
-          ))}
-        </nav>
-        <div className="sidebar-footer">
-          <button><Icon name="settings" /><span>Configuración</span></button>
-          <div className="mini-profile">
-            {session.isTeam ? (
-              <div className="double-avatar">{session.members.map((m) => <div key={m.id} className="avatar" style={{ background: m.color }}>{initialsOf(m.name)}</div>)}</div>
-            ) : (
-              <div className="avatar" style={{ background: session.members[0]?.color }}>{initialsOf(session.members[0]?.name ?? "?")}</div>
-            )}
-            <div><strong>{session.name}</strong><span>{session.isTeam ? "Equipo productor" : "Productor individual"}</span></div>
-            <Icon name="arrow" />
-          </div>
-        </div>
-      </aside>
-
-      <main>
-        <header className="topbar">
-          <div className="mobile-brand brand"><div className="brand-mark"><span>🍧</span></div><strong>El Primo</strong></div>
-          <label className="search"><Icon name="search" /><input aria-label="Buscar" placeholder="Buscar producción, sabor..." /></label>
-          <div className="top-actions">
-            <button aria-label="Notificaciones" className="icon-button"><Icon name="bell" /><i /></button>
-            {session.isTeam ? (
-              <div className="double-avatar">{session.members.map((m) => <div key={m.id} className="avatar" style={{ background: m.color }}>{initialsOf(m.name)}</div>)}</div>
-            ) : (
-              <div className="avatar" style={{ background: session.members[0]?.color }}>{initialsOf(session.members[0]?.name ?? "?")}</div>
-            )}
-          </div>
-        </header>
-
-        <div className="content">
-          <section className="welcome">
-            <div>
-              <p className="eyebrow">{new Date().toLocaleDateString("es-PE", { weekday: "long", day: "numeric", month: "long" }).toUpperCase()}</p>
-              <h1>¡Buen día, {session.isTeam ? "primos" : session.name}! <span>👋</span></h1>
-              <p>Todo va sobre ruedas. Mira cómo va la producción {period.toLowerCase()}.</p>
+      <main className="entry">
+        <div className="entry-panel">
+          <Brand />
+          <h1>¿Quién prepara hoy?</h1>
+          <p className="muted">Elige tu equipo de trabajo para empezar.</p>
+          {catalogStatus === "loading" && <p className="entry-status" role="status">Conectando con el servidor…</p>}
+          {catalogStatus === "error" && (
+            <div className="entry-status" role="alert">
+              <p>No pudimos cargar los equipos y sabores.</p>
+              <button type="button" className="button secondary" onClick={() => { setCatalogStatus("loading"); setCatalogAttempt((attempt) => attempt + 1); }}>Reintentar</button>
             </div>
-            <div className="quick-actions">
-              <button className="secondary" onClick={() => setActive("Catálogo")}><span>🍓</span> Nuevo sabor</button>
-              <button className="primary" onClick={() => setShowForm(true)}><Icon name="plus" /> Registrar producción</button>
-            </div>
-          </section>
-
-          {active === "Mi perfil" ? (
-            <section className="profiles-page">
-              <div className="section-heading"><p className="eyebrow">EL EQUIPO</p><h2>Perfiles del equipo</h2><p>Los puntos se acumulan por equipo de trabajo.</p></div>
-              <div className="profile-grid">
-                {workGroups.map((g) => {
-                  const r = rankingView.find((x) => x.id === g.id);
-                  return (
-                    <article className="card profile-card" key={g.id}>
-                      {g.isTeam ? (
-                        <div className="double-avatar large" style={{ margin: "0 auto", justifyContent: "center", marginBottom: 12 }}>
-                          {g.members.map((m) => <div key={m.id} className="avatar profile-avatar" style={{ background: m.color, width: 68, height: 68, fontSize: 16 }}>{initialsOf(m.name)}</div>)}
-                        </div>
-                      ) : (
-                        <div className="avatar profile-avatar" style={{ background: g.members[0]?.color }}>{initialsOf(g.members[0]?.name ?? "?")}</div>
-                      )}
-                      <h3>{g.name}</h3>
-                      <strong>{(r?.totalPoints ?? 0).toFixed(2)} puntos</strong>
-                      <span className={`work-chip ${g.isTeam ? "" : "solo"}`}>{g.isTeam ? "Trabaja en equipo" : "Trabaja individualmente"}</span>
-                      <div className="profile-stat"><span>Este período</span><b>{r?.totalPoints.toFixed(2) ?? "0.00"} pts</b></div>
-                    </article>
-                  );
-                })}
-              </div>
-            </section>
-                    ) : active === "Estadísticas" ? (
-            <section className="stats-page card">
-              <p className="eyebrow">ANALYTICS</p><h2>Distribución por equipo</h2><p>Puntos acumulados por preparaciones</p>
-              
-              {(() => {
-                const totalPoints = rankingView.reduce((s, r) => s + r.totalPoints, 0);
-                return (
-                  <div className="stats-content">
-                    <div 
-                      className="team-donut" 
-                      style={totalPoints > 0 ? { background: buildTeamDonut(rankingView, totalPoints) } : undefined}
-                    >
-                      <div>
-                        <strong>{totalPoints.toFixed(0)}</strong>
-                        <span>puntos</span>
-                      </div>
-                    </div>
-                    <div className="stats-legend">
-                      {rankingView.map((r) => (
-                        <p key={r.id}>
-                          <i style={{ background: r.members[0]?.color }} />
-                          <span>{r.name}</span>
-                          <strong>{r.totalPoints.toFixed(2)} pts</strong>
-                        </p>
-                      ))}
-                    </div>
-                  </div>
-                );
-              })()}
-
-              <div className="insight large">
-                <span>💡</span>
-                <p><strong>Ritmo de equilibrio 2 a 1</strong>Un equipo de 2 necesita el doble de preparaciones para igualar los puntos de un productor individual.</p>
-              </div>
-            </section>
-          ) : active === "Historial" ? (
-            <section className="card activity-card history-page">
-              <div className="card-head"><div><p className="eyebrow">REGISTROS</p><h2>Historial de producciones</h2><p>Una preparación por cada registro</p></div></div>
-              <div className="activity-list">
-                {historyProductions.length === 0 ? (
-                  <p style={{ color: "#858690", padding: 20 }}>Aún no hay producciones registradas.</p>
-                ) : (
-                  historyProductions.map((item) => (
-                    <div className="activity-row" key={item.id}>
-                      <div className="product-icon" style={{ background: `${item.productColor ?? "#eee"}30` }}>{item.productEmoji ?? "🍧"}</div>
-                      {item.isTeam ? (
-                        <div className="double-avatar activity-avatar">{item.members.map((m) => <div key={m.id} className="avatar" style={{ background: m.color }}>{initialsOf(m.name)}</div>)}</div>
-                      ) : (
-                        <div className="avatar violet activity-avatar" style={{ background: item.members[0]?.color }}>{initialsOf(item.members[0]?.name ?? "?")}</div>
-                      )}
-                      <div className="activity-title"><strong>{item.productName}</strong><span>{item.workGroupName} · {timeAgo(item.producedAt)}</span></div>
-                      <b className="point-badge">{item.isTeam ? `Grupo · ${item.points.toFixed(2)} pts` : `Individual · ${item.points.toFixed(0)} pt`}</b>
-                      <button className="more">•••</button>
-                    </div>
-                  ))
-                )}
-              </div>
-            </section>
-          ) : active !== "Dashboard" ? (
-            <section className="empty-page card">
-              <div className="empty-icon">{active === "Catálogo" ? "🍓" : active === "Registrar" ? "🍧" : "📊"}</div>
-              <p className="eyebrow">DULCERÍA EL PRIMO</p><h2>{active}</h2><p>Esta sección está lista para continuar la experiencia de producción.</p>
-              <button className="primary" onClick={() => active === "Registrar" ? setShowForm(true) : setActive("Dashboard")}>{active === "Registrar" ? "Registrar ahora" : "Volver al dashboard"}</button>
-            </section>
-          ) : (
-            <>
-              <div className="period-row">
-                <div className="period-tabs">
-                  {["Esta semana", "Este mes", "Últimos 3 meses", "Todo"].map((item) => (
-                    <button className={period === item ? "active" : ""} onClick={() => setPeriod(item)} key={item}>{item}</button>
-                  ))}
-                </div>
-              </div>
-
-              <section className="metrics">
-                <article className="metric-card coral-wash">
-                  <div className="metric-icon">🍧</div>
-                  <div><span>PREPARACIONES</span><strong>{totalProductions}</strong><small><b>Período:</b> {period.toLowerCase()}</small></div>
-                  <div className="spark"><i /><i /><i /><i /><i /><i /><i /></div>
-                </article>
-                <article className="metric-card mint-wash">
-                  <div className="metric-icon">🏅</div>
-                  <div><span>LÍDER DEL PERÍODO</span><strong>{leader?.name ?? "—"}</strong><small><b>{(leader?.totalPoints ?? 0).toFixed(2)} puntos</b> en total</small></div>
-                  {leader && <div className="leader-avatar" style={{ background: leader.isTeam ? leader.members[0]?.color : leader.members[0]?.color }}>{initialsOf(leader.name)}<span>1</span></div>}
-                </article>
-                <article className="metric-card yellow-wash">
-                  <div className="metric-icon">{favorite?.emoji ?? "🥭"}</div>
-                  <div><span>FAVORITO</span><strong>{favorite?.productName.replace("Cremolada de ", "") ?? "—"}</strong><small><b>{favorite?.totalProductions ?? 0} preparaciones</b> {period.toLowerCase()}</small></div>
-                </article>
-              </section>
-
-              <section className="dashboard-grid">
-                <article className="card ranking-card">
-                  <div className="card-head">
-                    <div><h2>Ranking de equipos</h2><p>{leader ? `¡${leader.name} va liderando ${period.toLowerCase()}! 🔥` : "Sin producciones todavía"}</p></div>
-                    <button className="link" onClick={() => setActive("Estadísticas")}>Ver estadísticas <Icon name="arrow" /></button>
-                  </div>
-                  <div className="ranking-list">
-                    {rankingView.map((person) => (
-                      <div className="rank-row" key={person.id}>
-                        <span className={`medal medal-${person.position}`}>{person.position}</span>
-                        {person.isTeam ? (
-                          <div className="double-avatar" style={{ minWidth: 42 }}>
-                            {person.members.map((m) => <div key={m.id} className="avatar" style={{ width: 30, height: 30, fontSize: 9, background: m.color }}>{initialsOf(m.name)}</div>)}
-                          </div>
-                        ) : (
-                          <div className="avatar" style={{ width: 33, height: 33, fontSize: 9, background: person.members[0]?.color }}>{initialsOf(person.members[0]?.name ?? "?")}</div>
-                        )}
-                        <div className="rank-main">
-                          <div><strong>{person.name}</strong><span>{person.totalPoints.toFixed(2)} pts</span></div>
-                          <div className="progress"><i style={{ width: `${(person.totalPoints / maxPoints) * 100}%`, background: person.members[0]?.color }} /></div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                  <div className="insight">
-                    <span>💡</span>
-                    <p><strong>Ritmo de equilibrio 2 a 1</strong>Un equipo de 2 necesita el doble de preparaciones para igualar los puntos de un productor individual.</p>
-                  </div>
-                </article>
-
-                <article className="card chart-card">
-                  <div className="card-head"><div><h2>Producción por equipo</h2><p>Puntos obtenidos · {period.toLowerCase()}</p></div><button className="more">•••</button></div>
-                  <div className="bar-chart">
-                    {rankingView.map((r) => {
-                      const h = maxPoints > 0 ? (r.totalPoints / maxPoints) * 100 : 0;
-                      return (
-                        <div className="bar-col" key={r.id}>
-                          <div className="bar-track"><i style={{ height: `${Math.max(h, 4)}%`, background: r.members[0]?.color }} /></div>
-                          <span style={{ fontSize: 9 }}>{r.name.substring(0, 4)}</span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                  <div className="legend">
-                    {rankingView.map((r) => (
-                      <span key={r.id}><i style={{ background: r.members[0]?.color }} />{r.name}</span>
-                    ))}
-                  </div>
-                </article>
-
-                <article className="card favorites-card">
-                  <div className="card-head"><div><h2>Sabores favoritos</h2><p>Los más preparados</p></div><button className="link" onClick={() => setActive("Catálogo")}>Ver catálogo <Icon name="arrow" /></button></div>
-                  <div className="donut-wrap">
-                    <div className="donut" style={favorites.length > 0 ? { background: buildDonut(favorites, totalProductions) } : undefined}>
-                      <div><strong>{totalProductions}</strong><span>preparaciones</span></div>
-                    </div>
-                    <div className="flavor-list">
-                      {favorites.length === 0 ? (
-                        <p style={{ color: "#858690" }}>Sin datos aún</p>
-                      ) : (
-                        favorites.map((f) => {
-                          const pct = totalProductions > 0 ? Math.round((f.totalProductions / totalProductions) * 100) : 0;
-                          return (
-                            <p key={f.productId}><i style={{ background: f.color ?? "#ccc" }} />{f.productName.replace("Cremolada de ", "")}{" "}<strong>{f.totalProductions} <small>{pct}%</small></strong></p>
-                          );
-                        })
-                      )}
-                    </div>
-                  </div>
-                </article>
-              </section>
-
-              <section className="card activity-card">
-                <div className="card-head"><div><h2>Últimas producciones</h2><p>Lo que el equipo ha preparado recientemente</p></div><button className="link" onClick={() => setActive("Historial")}>Ver historial <Icon name="arrow" /></button></div>
-                <div className="activity-list">
-                  {recentProductions.length === 0 ? (
-                    <p style={{ color: "#858690", padding: 20 }}>Aún no hay producciones registradas.</p>
-                  ) : (
-                    recentProductions.map((item) => (
-                      <div className="activity-row" key={item.id}>
-                        <div className="product-icon" style={{ background: `${item.productColor ?? "#eee"}30` }}>{item.productEmoji ?? "🍧"}</div>
-                        {item.isTeam ? (
-                          <div className="double-avatar activity-avatar">{item.members.map((m) => <div key={m.id} className="avatar" style={{ background: m.color }}>{initialsOf(m.name)}</div>)}</div>
-                        ) : (
-                          <div className="avatar activity-avatar" style={{ background: item.members[0]?.color }}>{initialsOf(item.members[0]?.name ?? "?")}</div>
-                        )}
-                        <div className="activity-title"><strong>{item.productName}</strong><span>{item.workGroupName} · {timeAgo(item.producedAt)}</span></div>
-                        <b className="point-badge">{item.isTeam ? `Grupo · ${item.points.toFixed(2)} pts` : `Individual · ${item.points.toFixed(0)} pt`}</b>
-                        <button className="more">•••</button>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </section>
-            </>
+          )}
+          {catalogStatus === "ready" && (
+            groups.length > 0 ? <div className="entry-options">
+              {groups.map((group) => (
+                <button key={group.id} type="button" onClick={() => enter(group)}>
+                  <GroupBadge group={group} />
+                  <span><strong>{group.name}</strong><small>{group.isTeam ? "En equipo" : "Individual"}</small></span>
+                  <Icon name="arrow" />
+                </button>
+              ))}
+            </div> : <p className="entry-status">Todavía no hay equipos registrados.</p>
           )}
         </div>
       </main>
+    );
+  }
 
-      <nav className="bottom-nav">
-        {nav.slice(0, 5).map(([label, icon]) => (
-          <button key={label} className={active === label ? "active" : ""} onClick={() => label === "Registrar" ? setShowForm(true) : setActive(label)}>
-            <Icon name={icon} /><span>{label}</span>
+  const dates = orderedRecords.flatMap(({ date }) => date ? [monthKey.format(date)] : []);
+  const months = [...new Set(month ? [...dates, month] : dates)].sort().reverse();
+  const filtered = month
+    ? orderedRecords.filter(({ date }) => date !== null && monthKey.format(date) === month)
+    : orderedRecords;
+  const historyRecords = historyFlavor
+    ? filtered.filter(({ record }) => record.productId === historyFlavor.id)
+    : filtered;
+  const groupsById = new Map(groups.map((group) => [group.id, { group, count: 0, points: 0 }]));
+  for (const { record } of filtered) {
+    const result = groupsById.get(record.workGroupId);
+    if (result) {
+      result.count += 1;
+      result.points += record.points;
+    }
+  }
+  const scores = [...groupsById.values()].sort((first, second) => second.points - first.points);
+  const highest = scores[0]?.points ?? 0;
+  const categories = page === "Sabores" ? groupProducts(products) : null;
+  const empty = month ? "Todavía no hay preparaciones en este mes." : "Todavía no hay preparaciones registradas.";
+
+  return (
+    <div className="app-shell">
+      <header className="workspace-header">
+        <div className="header-inner">
+          <Brand />
+          <button type="button" className="team-switch" onClick={() => setSession(null)} aria-label={"Cambiar equipo. Equipo actual: " + session.name}>
+            <GroupBadge group={session} /><span>{session.name}</span><Icon name="switch" />
           </button>
-        ))}
-      </nav>
-
-      {showForm && (
-        <div className="modal-backdrop" onMouseDown={() => setShowForm(false)}>
-          <section className="modal" onMouseDown={(e) => e.stopPropagation()}>
-            <button className="close" onClick={() => setShowForm(false)}>×</button>
-            <p className="eyebrow">NUEVA PRODUCCIÓN</p><h2>¿Qué prepararon hoy?</h2><p>Selecciona el producto y quién estuvo a cargo.</p>
-            <div className="product-options">
-              {products.map((p) => (
-                <button key={p.id} className={selectedProductId === p.id ? "selected" : ""} onClick={() => setSelectedProductId(p.id)} style={selectedProductId === p.id ? { borderColor: p.color ?? "#ff6b6b" } : undefined}>
-                  {p.emoji ?? "🍧"}<span>{p.name.replace("Cremolada de ", "")}</span>
-                </button>
-              ))}
-            </div>
-            <h3 className="field-label">¿QUIÉN ESTUVO A CARGO?</h3>
-            <div className="responsible-options">
-              {workGroups.map((g) => (
-                <button key={g.id} className={responsibleId === g.id ? "selected" : ""} onClick={() => setResponsibleId(g.id)}>
-                  {g.isTeam ? (
-                    <div className="double-avatar">{g.members.map((m) => <div key={m.id} className="avatar" style={{ background: m.color }}>{initialsOf(m.name)}</div>)}</div>
-                  ) : (
-                    <div className="avatar" style={{ background: g.members[0]?.color }}>{initialsOf(g.members[0]?.name ?? "?")}</div>
-                  )}
-                  <span><strong>{g.name}</strong><small>{g.isTeam ? "Equipo fijo" : "Individual"}</small></span>
-                  <i />
-                </button>
-              ))}
-            </div>
-            {(() => {
-              const g = workGroups.find((x) => x.id === responsibleId) ?? null;
-              if (!g) return null;
-              const pts = g.isTeam ? 0.5 : 1.0;
-              return (
-                <div className="points-preview">
-                  <span>⚡</span>
-                  <p><strong>Esta producción otorgará {pts} puntos al equipo</strong>{g.isTeam ? `${g.name} sumará 0.5 pts` : `${g.name} sumará 1.0 pt`}</p>
-                </div>
-              );
-            })()}
-            {error && <p style={{ color: "coral", fontSize: 12, marginTop: 8 }}>{error}</p>}
-            <button className="primary full" onClick={handleCreateProduction} disabled={saving || !selectedProductId || !responsibleId} style={saving ? { opacity: 0.6, cursor: "not-allowed" } : undefined}>
-              {saving ? "Registrando…" : "Continuar registro"}<Icon name="arrow" />
-            </button>
-          </section>
         </div>
-      )}
+      </header>
+
+      <div className="workspace">
+        <nav className="navigation" aria-label="Navegación principal">
+          {pages.map((item) => (
+            <button type="button" key={item.name} aria-current={page === item.name ? "page" : undefined} onClick={() => navigate(item.name)}>
+              <Icon name={item.icon} /><span>{item.name}</span>
+            </button>
+          ))}
+        </nav>
+
+        <main className="content">
+          {page === "Inicio" && (
+            <section className="hero" aria-labelledby="home-title">
+              <div className="hero-content">
+                <p className="hero-date">{dayLabel.format(new Date())}</p>
+                <h1 id="home-title">Producción</h1>
+                <button type="button" className="button hero-action" onClick={() => openDialog({ kind: "register" })}><Icon name="plus" /> Registrar preparación</button>
+              </div>
+              <div className="hero-art" aria-hidden="true"><Icon name="flavors" /></div>
+            </section>
+          )}
+          {page !== "Inicio" && (
+            <div className="page-heading">
+              <h1 className="page-title">{page}</h1>
+              {page === "Sabores" && (
+                <button type="button" className="button primary" onClick={() => openDialog({ kind: "flavor" })}><Icon name="plus" /> Nuevo sabor</button>
+              )}
+            </div>
+          )}
+          {confirmation && <p className="confirmation" role="status"><Icon name="check" />{confirmation}</p>}
+
+          {page !== "Sabores" && (
+            <>
+              <div className="period-bar">
+                <label className="period-control">
+                  <Icon name="calendar" />
+                  <span className="sr-only">Período</span>
+                  <select value={month} onChange={(event) => setMonth(event.target.value)}>
+                    <option value="">Todo el historial</option>
+                    {months.map((key) => (
+                      <option key={key} value={key}>{monthLabel.format(new Date(key + "-15T12:00:00Z"))}</option>
+                    ))}
+                  </select>
+                </label>
+                <button type="button" className="button secondary update-button" onClick={refreshRecords} disabled={recordsStatus === "loading"}>
+                  <Icon name="refresh" /> Actualizar
+                </button>
+              </div>
+              {recordsStatus === "loading" && records === null && <p className="empty-state" role="status">Cargando preparaciones…</p>}
+              {recordsStatus === "error" && <p className="notice" role="alert">No pudimos actualizar las preparaciones. Usa «Actualizar» para reintentar.</p>}
+              {records !== null && page === "Inicio" && (
+                <div className="dashboard-grid">
+                  <section className="panel overview">
+                    <div className="panel-heading"><h2>Preparaciones</h2><strong className="period-total">{filtered.length}</strong></div>
+                    <h3>Puntos por equipo</h3>
+                    <ul className="score-list">
+                      {scores.map(({ group, count, points }) => {
+                        const missing = Math.ceil((highest - points) * group.members.length - 1e-9);
+                        return (
+                          <li key={group.id}>
+                            <GroupBadge group={group} />
+                            <div>
+                              <strong>{group.name}</strong>
+                              <span>{count} {count === 1 ? "preparación" : "preparaciones"}</span>
+                              {missing > 0 && <span className="samples-needed">Para alcanzar al primero: {missing} {missing === 1 ? "preparación" : "preparaciones"}</span>}
+                            </div>
+                            <strong className="score-points">{numberLabel.format(points)} pts</strong>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </section>
+                  <section className="panel recent-panel">
+                    <div className="panel-heading">
+                      <h2>Últimas preparaciones</h2>
+                      <button type="button" className="text-button" onClick={() => navigate("Historial")}>Ver historial <Icon name="arrow" /></button>
+                    </div>
+                    <HistoryList records={filtered.slice(0, 5)} empty={empty} />
+                  </section>
+                </div>
+              )}
+              {records !== null && page === "Historial" && (
+                <section className="panel recent-panel">
+                  <div className="panel-heading"><h2>{historyRecords.length} {historyRecords.length === 1 ? "preparación" : "preparaciones"}</h2></div>
+                  {historyFlavor && (
+                    <div className="history-flavor-filter">
+                      <span>{historyFlavor.name}</span>
+                      <button type="button" className="text-button" onClick={() => setHistoryFlavor(null)}><Icon name="close" /> Quitar filtro</button>
+                    </div>
+                  )}
+                  <HistoryList records={historyRecords} empty={historyFlavor ? "No hay preparaciones de este sabor en el período." : empty} />
+                </section>
+              )}
+              {records !== null && page === "Estadísticas" && (
+                <FlavorStatistics records={filtered} empty={empty} onViewHistory={(flavor) => navigate("Historial", flavor)} />
+              )}
+            </>
+          )}
+
+          {categories && (
+            <div className="catalog">
+              {categories.size === 0 && <p className="empty-state">Todavía no hay sabores activos.</p>}
+              {[...categories].map(([category, categoryProducts]) => (
+                <section className="panel catalog-section" key={category}>
+                  <h2>{category}</h2>
+                  <ul className="catalog-grid">
+                    {categoryProducts.map((product) => (
+                      <li key={product.id}>
+                        <FlavorMark emoji={product.emoji || product.categoryEmoji} color={product.color} />
+                        <strong>{product.name}</strong>
+                        <button type="button" className="icon-button catalog-edit" title="Editar apariencia"
+                          aria-label={"Editar apariencia de " + product.name} onClick={() => openDialog({ kind: "flavor", product })}>
+                          <Icon name="edit" />
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              ))}
+            </div>
+          )}
+        </main>
+      </div>
+      {dialog?.kind === "register" && <RegistrationDialog products={products} groups={groups} session={session} onDismiss={() => setDialog(null)} onSaved={saved} />}
+      {dialog?.kind === "flavor" && <FlavorDialog product={dialog.product} onDismiss={() => setDialog(null)} onSaved={savedFlavor} />}
     </div>
   );
-}
-
-function buildDonut(favorites: FavoriteProduct[], total: number): string {
-  if (total === 0 || favorites.length === 0) return "conic-gradient(#eee 0 100%)";
-  const palette = ["#ffb54d", "#ff7e87", "#ffd65a", "#555663", "#e9dfd3"];
-  let acc = 0;
-  const stops = favorites.slice(0, 5).map((f, i) => {
-    const start = acc;
-    const pct = (f.totalProductions / total) * 100;
-    acc += pct;
-    const color = f.color && /^#[0-9a-f]{6}$/i.test(f.color) ? f.color : palette[i % palette.length];
-    return `${color} ${start}% ${acc}%`;
-  });
-  return `conic-gradient(${stops.join(", ")})`;
-}
-
-function buildTeamDonut(ranking: Ranking[], total: number): string {
-  if (total === 0 || ranking.length === 0) return "conic-gradient(#eee 0 100%)";
-  
-  let acc = 0;
-  const stops = ranking.map((r) => {
-    const start = acc;
-    const pct = (r.totalPoints / total) * 100;
-    acc += pct;
-    const color = r.members[0]?.color || "#ccc";
-    return `${color} ${start}% ${acc}%`;
-  });
-  
-  return `conic-gradient(${stops.join(", ")})`;
 }
